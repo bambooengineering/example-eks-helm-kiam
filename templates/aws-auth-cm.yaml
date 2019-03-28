@@ -1,0 +1,22 @@
+# This config map is read by EKS to determine which AWS users have access to a cluster.
+# https://docs.aws.amazon.com/eks/latest/userguide/add-user-role.html
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapRoles: |
+    # This ensures the worker nodes can join the cluster
+    - rolearn: NODE_INSTANCE_ROLE
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes
+
+    # This ensures the kiam server nodes can join the cluster
+    - rolearn: KIAM_SERVER_NODE_INSTANCE_ROLE
+      username: system:node:{{EC2PrivateDNSName}}
+      groups:
+        - system:bootstrappers
+        - system:nodes

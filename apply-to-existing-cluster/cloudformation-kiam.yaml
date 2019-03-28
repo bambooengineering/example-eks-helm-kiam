@@ -1,0 +1,296 @@
+# This template creates:
+# 1. A worker node group for kiam server pods
+# 2. An example SNS
+# 3. An example Role for a pod to assume to connect to that SNS
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'A Kiam worker node group for an EKS instance'
+
+Parameters:
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+
+  EKSClusterName:
+    Type: String
+    Description: Name for EKS Cluster
+
+  AMIID:
+    Type: AWS::EC2::Image::Id
+    Description: AMI id for the node instances (Latest can be found here https://docs.aws.amazon.com/eks/latest/userguide/getting-started.html#eks-launch-workers)
+
+  ControlPlaneSecurityGroup:
+    Type: String
+    Description: Security group for the cluster control plane communication with worker nodes
+
+  NodeSecurityGroup:
+    Type: String
+    Description: Security group for the worker nodes
+
+  VPC:
+    Type: String
+    Description: The VPC Id
+
+  PrivateSubnet01:
+    Type: String
+    Description: The cluster private Subnet 01
+
+  PrivateSubnet02:
+    Type: String
+    Description: The cluster private Subnet 02
+
+  PrivateSubnet03:
+    Type: String
+    Description: The cluster private Subnet 03
+
+  BootstrapArguments:
+    Description: Arguments to pass to the bootstrap script. See files/bootstrap.sh in https://github.com/awslabs/amazon-eks-ami
+    Default: ""
+    Type: String
+
+  NodeVolumeSize:
+    Type: Number
+    Description: Node volume size in GB
+    Default: 20
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: "EKS Configuration"
+        # TODO
+
+Resources:
+  KiamServerNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+      - !Ref KiamServerNodeInstanceRole
+
+  KiamServerNodeInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      # This allows the EC2 worker nodes to assume this role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      # This allows the EC2 worker nodes to further assume required business logic roles
+      Policies:
+      - PolicyName: assume-required-roles
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - sts:AssumeRole
+            # Here we specify the roles that the worker pods are allowed to assume. Notice
+            # it can contain wildcards (NB it is not a regex).
+            Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/${EKSClusterName}-pod-role-*"
+      Path: "/"
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      RoleName: !Sub "${EKSClusterName}-kiam-server-node-role"
+
+  KiamServerNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for all kiam server nodes in the cluster
+      VpcId:
+        !Ref VPC
+      Tags:
+      - Key: !Sub "kubernetes.io/cluster/${EKSClusterName}"
+        Value: 'owned'
+
+  KiamServerNodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow kiam server nodes to communicate with each other
+      GroupId: !Ref KiamServerNodeSecurityGroup
+      SourceSecurityGroupId: !Ref KiamServerNodeSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+
+  KiamServerNodeSecurityGroupFromControlPlaneIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow worker Kubelets and pods to receive communication from the cluster control plane
+      GroupId: !Ref KiamServerNodeSecurityGroup
+      SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  ControlPlaneEgressToKiamServerNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with kiam server worker Kubelet and pods
+      GroupId: !Ref ControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref KiamServerNodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 1025
+      ToPort: 65535
+
+  KiamServerNodeSecurityGroupFromControlPlaneOn443Ingress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow pods running extension API servers on port 443 to receive communication from cluster control plane
+      GroupId: !Ref KiamServerNodeSecurityGroup
+      SourceSecurityGroupId: !Ref ControlPlaneSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ControlPlaneEgressToKiamServerNodeSecurityGroupOn443:
+    Type: AWS::EC2::SecurityGroupEgress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow the cluster control plane to communicate with pods running extension API servers on port 443
+      GroupId: !Ref ControlPlaneSecurityGroup
+      DestinationSecurityGroupId: !Ref KiamServerNodeSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+
+  ControlPlaneKiamServerSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow pods to communicate with the cluster API Server
+      GroupId: !Ref ControlPlaneSecurityGroup
+      SourceSecurityGroupId: !Ref KiamServerNodeSecurityGroup
+      IpProtocol: tcp
+      ToPort: 443
+      FromPort: 443
+
+  ######################################################
+  # This section allows the two node groups to talk to each other for the purposes of
+  # transferring IAM secrets. Specifically, it ensures the kiam server nodes permit connections
+  # inbound from the worker nodes.
+
+  KiamServerFromWorkerNodeSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn:
+    - KiamServerNodeSecurityGroup
+    Properties:
+      Description: Allow kiam server nodes to listen to the worker nodes
+      GroupId: !Ref KiamServerNodeSecurityGroup
+      SourceSecurityGroupId: !Ref NodeSecurityGroup
+      IpProtocol: '-1'
+      FromPort: 0
+      ToPort: 65535
+
+  ######################################################
+  # This section is a standard EKS worker node group and launch configuration for the kiam-server pods
+
+  KiamServerNodeGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn:
+    - KiamServerNodeLaunchConfig
+    Properties:
+      DesiredCapacity: 1
+      LaunchConfigurationName: !Ref KiamServerNodeLaunchConfig
+      MinSize: 1
+      MaxSize: 2
+      VPCZoneIdentifier:
+      - !Ref PrivateSubnet01
+      - !Ref PrivateSubnet02
+      - !Ref PrivateSubnet03
+      Tags:
+      - Key: Name
+        Value: !Sub "${EKSClusterName}-kiam-server-node"
+        PropagateAtLaunch: 'true'
+      - Key: !Sub 'kubernetes.io/cluster/${EKSClusterName}'
+        Value: 'owned'
+        PropagateAtLaunch: 'true'
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: '1'
+        MaxBatchSize: '1'
+
+  KiamServerNodeLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: 'false'
+      IamInstanceProfile: !Ref KiamServerNodeInstanceProfile
+      ImageId: !Ref 'AMIID'
+      InstanceType: 't3.medium'
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref KiamServerNodeSecurityGroup
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: !Ref NodeVolumeSize
+          VolumeType: gp2
+          DeleteOnTermination: true
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash
+          set -o xtrace
+          # Label the box so kaim-server runs here, and taint it
+          # so that the other services do not run here.
+          /etc/eks/bootstrap.sh ${EKSClusterName} ${BootstrapArguments} \
+                   --kubelet-extra-args '--node-labels=kiam-server=true,kubernetes.io/role=kiam-server-node --register-with-taints=kiam-server=false:NoExecute'
+          /opt/aws/bin/cfn-signal --exit-code $? \
+                   --stack  ${AWS::StackName} \
+                   --resource NodeGroup  \
+                   --region ${AWS::Region}
+
+  ########################################################################################
+  # This section just defines our example runtime business logic roles. They can be removed when
+  # this template is applied to your own cluster.
+
+  RuntimePodRole:
+    Type: AWS::IAM::Role
+    DependsOn: ExampleSnsTopic
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        # This states that this business logic role is permitted to be assumed by the kiam server,
+        # and thus be allowed to be requested by running pods on the worker nodes.
+        Statement:
+        - Effect: Allow
+          Principal:
+            AWS: !GetAtt KiamServerNodeInstanceRole.Arn
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: example-access-policy
+        PolicyDocument:
+          # These statements are the example business logic permissions required for this pod to run
+          Statement:
+          - Effect: Allow
+            Action:
+            - sns:GetTopicAttributes
+            Resource: !Ref ExampleSnsTopic
+      Path: "/"
+      RoleName: !Sub "${EKSClusterName}-pod-role-somesuffix"
+
+  # An example topic that we want our pod to be able to access.
+  ExampleSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "${EKSClusterName}-example-topic"
+      TopicName: !Sub "${EKSClusterName}-example-topic"
+
+  ######################################################
+
+Outputs:
+  # This output is required to authorise the kiam server boxes to join the cluster
+  KiamServerNodeInstanceRole:
+    Description: The kiam server node instance role
+    Value: !GetAtt KiamServerNodeInstanceRole.Arn

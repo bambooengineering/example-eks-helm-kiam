@@ -1,0 +1,15 @@
+# Helm cannot create namespaces from templates during installs.
+# https://github.com/helm/helm/issues/3179
+# It creates them ahead of time automatically, which is good unless you need annotations
+# (which we do for kiam). So we must create the namespace with this file (and kubectl)
+# before we use helm.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: example
+  annotations:
+    # The value kiam is expecting here is a regex, *not* a string with wildcards (which is how AWS
+    # specifies multiple resources. Thus, this string has a dot before the asterisk.
+    # Note also, by default we can use the short version (no AWS account etc).
+    iam.amazonaws.com/permitted: example-kiam-cluster-pod-role-.*

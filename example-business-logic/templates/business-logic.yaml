@@ -1,0 +1,24 @@
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: business-logic-deployment
+  labels:
+    app: business-logic-deployment
+spec:
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        iam.amazonaws.com/role: example-kiam-cluster-pod-role-somesuffix
+      labels:
+        app: business-logic-deployment
+    spec:
+      containers:
+      - name: example-pod
+
+        # TODO create our own docker image to do this
+        image: somedeveloper/aws-cli:latest
+
+        command: [ "/bin/bash", "-c", "--" ]
+        args: [ "while true; do sleep 30; done;" ]
