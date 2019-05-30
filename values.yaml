@@ -19,7 +19,6 @@ agent:
   extraHostPathMounts:
   - name: ssl-certs
     mountPath: /etc/ssl/certs
-    # TODO Running on Amazon Linux or RHEL distros:
     hostPath: /etc/pki/ca-trust/extracted/pem
   log:
     level: debug
@@ -44,9 +43,7 @@ server:
   extraHostPathMounts:
   - name: ssl-certs
     mountPath: /etc/ssl/certs
-    # TODO Running on Amazon Linux or RHEL distros:
     hostPath: /etc/pki/ca-trust/extracted/pem
-  # TODO See if this is necessary?
   useHostNetwork: true
   log:
     level: debug

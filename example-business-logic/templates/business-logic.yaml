@@ -16,9 +16,6 @@ spec:
     spec:
       containers:
       - name: example-pod
-
-        # TODO create our own docker image to do this
         image: somedeveloper/aws-cli:latest
-
         command: [ "/bin/bash", "-c", "--" ]
         args: [ "while true; do sleep 30; done;" ]
