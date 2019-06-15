@@ -1,7 +1,4 @@
-## A script using CloudFormation and helm to create an EKS cluster configured with kiam
-
-A repo with scripts and templates to configure Kiam for an EKS cluster, deployed using 
-Cloudformation and Helm.
+## A repo with scripts and templates to configure Kiam for an EKS cluster, deployed using CloudFormation and Helm.
 
 To set up a CloudFormation created VPC with an EKS cluster and kiam installed and configured, 
 perform the following:
