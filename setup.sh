@@ -71,4 +71,8 @@ echo "Creating the example namespace and business logic pods..."
 kubectl apply -f templates/example-namespace.yaml
 helm upgrade --install example-business-logic example-business-logic --namespace example
 
+echo "**********************************************************"
+
 echo "Complete!"
+echo "You can now ssh onto the example business logic pod to check the kiam installation."
+echo "See the blog post for more details at https://bambooengineering.io/2019/06/14/kiam-on-eks-with-helm.html"
