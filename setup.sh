@@ -4,6 +4,10 @@ set -euo pipefail
 echo "Setting up EKS cluster with cloudformation, helm and kiam..."
 echo "AWS region: $AWS_DEFAULT_REGION"
 echo "EC2 ssh key name: $KEY_NAME"
+echo "Checking helm install"
+helm version --client
+echo "Checking aws install"
+aws --version
 
 # Check the key pair exists
 aws ec2 describe-key-pairs --key-name $KEY_NAME
@@ -16,18 +20,18 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 # Since it necessarily creates roles, the `--capabilities CAPABILITY_NAMED_IAM` flag
 # is required.
 echo "Creating cloudformation stack..."
-aws cloudformation update-stack  \
+aws cloudformation create-stack  \
     --capabilities CAPABILITY_NAMED_IAM \
     --stack-name $CLUSTER_NAME \
     --parameters ParameterKey=EKSClusterName,ParameterValue=$CLUSTER_NAME ParameterKey=KeyName,ParameterValue=$KEY_NAME \
     --template-body file://cloudformation-vpc-eks-kiam.yaml
 
-echo "Waiting for the $STACK_NAME stack to finish creating. This can take some time (~15 minutes). Why not go an get a coffee?"
+echo "Waiting for the $STACK_NAME stack to finish creating. The generation of an EKS cluster can take some time (~15 minutes). You can watch the progress in the AWS console, or why not go and get a coffee?"
 aws cloudformation wait stack-create-complete --stack-name $STACK_NAME
 
 echo "Retrieve the connection details for the new cluster..."
 aws eks update-kubeconfig --name $CLUSTER_NAME
-# Added new context arn:aws:eks:eu-west-1:905282256883:cluster/eks-cloudformation-helm-kiam to /home/harry/.kube/config
+# Added new context arn:aws:eks:eu-west-1:905282256883:cluster/eks-cloudformation-helm-kiam to /home/username/.kube/config
 
 # Output the roles of the two node groups
 NODE_INSTANCE_ROLE=$(aws cloudformation describe-stacks --stack-name $STACK_NAME --query 'Stacks[0].Outputs[?OutputKey==`NodeInstanceRole`].OutputValue' --output text)
