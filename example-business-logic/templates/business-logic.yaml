@@ -16,6 +16,7 @@ spec:
     spec:
       containers:
       - name: example-pod
-        image: somedeveloper/aws-cli:latest
+        image: bambooengineering/ubuntu-awscli:1.16.169
         command: [ "/bin/bash", "-c", "--" ]
+        # Sleep forever to allow a user to ssh into the container and test IAM permissions
         args: [ "while true; do sleep 30; done;" ]
